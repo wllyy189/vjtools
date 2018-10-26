@@ -2,15 +2,15 @@ package com.vip.vjtools.vjtop.data;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.LinkedHashMap;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import com.vip.vjtools.vjtop.Utils;
+import com.vip.vjtools.vjtop.util.Utils;
 
-import sun.management.counter.perf.PerfInstrumentation;
 import sun.management.counter.Counter;
+import sun.management.counter.LongCounter;
+import sun.management.counter.perf.PerfInstrumentation;
 import sun.misc.Perf;
 
 @SuppressWarnings("restriction")
@@ -19,16 +19,16 @@ public class PerfData {
 	// PerfData中的时间相关数据以tick表示，每个tick的时长与计算机频率相关
 	private final double nanosPerTick;
 
-	public static PerfData connect(long pid) {
+	private final Map<String, Counter> counters;
+
+	public static PerfData connect(int pid) {
 		try {
-			return new PerfData((int) pid);
+			return new PerfData(pid);
 		} catch (ThreadDeath e) {
 			throw e;
 		} catch (OutOfMemoryError e) {
 			throw e;
-		} catch (Error e) {
-			throw new RuntimeException("Cannot perf data for process " + pid + " - " + e.toString());
-		} catch (Exception e) {
+		} catch (Throwable e) {
 			throw new RuntimeException("Cannot perf data for process " + pid + " - " + e.toString());
 		}
 	}
@@ -36,12 +36,14 @@ public class PerfData {
 	private PerfData(int pid) throws IOException {
 		ByteBuffer bb = Perf.getPerf().attach(pid, "r");
 		instr = new PerfInstrumentation(bb);
-		long hz = ((sun.management.counter.LongCounter) instr.findByPattern("sun.os.hrt.frequency").get(0)).longValue();
+		counters = buildAllCounters();
+
+		long hz = (Long) counters.get("sun.os.hrt.frequency").getValue();
 		nanosPerTick = ((double) TimeUnit.SECONDS.toNanos(1)) / hz;
 	}
 
-	public Map<String, Counter> getAllCounters() {
-		Map<String, Counter> result = new LinkedHashMap<String, Counter>();
+	private Map<String, Counter> buildAllCounters() {
+		Map<String, Counter> result = new HashMap<>(512);
 
 		for (Counter c : instr.getAllCounters()) {
 			result.put(c.getName(), c);
@@ -50,13 +52,17 @@ public class PerfData {
 		return result;
 	}
 
-	public List<Counter> findByPattern(String pattern) {
-		return instr.findByPattern(pattern);
+	public Map<String, Counter> getAllCounters() {
+		return counters;
 	}
 
-	public long tickToMills(Counter tickCounter) {
+	public Counter findCounter(String counterName) {
+		return counters.get(counterName);
+	}
+
+	public long tickToMills(LongCounter tickCounter) {
 		if (tickCounter.getUnits() == sun.management.counter.Units.TICKS) {
-			return (long) ((nanosPerTick * (Long) tickCounter.getValue()) / Utils.NANOS_TO_MILLS);
+			return (long) ((nanosPerTick * tickCounter.longValue()) / Utils.NANOS_TO_MILLS);
 		} else {
 			throw new IllegalArgumentException(tickCounter.getName() + " is not a ticket counter");
 		}
